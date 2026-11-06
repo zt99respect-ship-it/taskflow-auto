@@ -6,17 +6,12 @@ set -uo pipefail
 #  Respect Broadcast — V11 (Infinite Relay, 3-5s switching)
 # ═══════════════════════════════════════════════════════════════
 
-RESTREAM_KEY="${RESTREAM_KEY:-}"
-[ -z "$RESTREAM_KEY" ] && { echo "❌ RESTREAM_KEY empty"; exit 1; }
-
 STREAMERS_LIST="${STREAMERS_LIST:-drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx}"
-RESTREAM_URL="rtmp://live.restream.io/live/$RESTREAM_KEY"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 WORKDIR="/tmp/standby_respect"
 FIFO="/tmp/relay.ts"
 KEEPER_READY="/tmp/relay_keeper.ready"
-mkdir -p "$WORKDIR"
 
 IFS=',' read -r -a STREAMERS <<< "$STREAMERS_LIST"
 export STREAMERS_LIST UA WORKDIR
@@ -34,6 +29,8 @@ generate_standby() {
         "https://raw.githubusercontent.com/google/fonts/main/ofl/orbitron/Orbitron%5Bwght%5D.ttf" \
         -o ~/.fonts/Orbitron-var.ttf || true
     fc-cache -f >/dev/null 2>&1 || true
+
+    mkdir -p "$WORKDIR"
 
     cat > /tmp/make_ui.py <<'PYEOF'
 import os
@@ -103,10 +100,17 @@ PYEOF
     return 0
 }
 
+# ⬇️⬇️⬇️ الفحص حق التجهيز صار هنا (قبل فحص المفتاح) ⬇️⬇️⬇️
 if [ "${PREPARE_ONLY:-0}" = "1" ]; then
     generate_standby
     exit $?
 fi
+
+RESTREAM_KEY="${RESTREAM_KEY:-}"
+[ -z "$RESTREAM_KEY" ] && { echo "❌ RESTREAM_KEY empty"; exit 1; }
+
+RESTREAM_URL="rtmp://live.restream.io/live/$RESTREAM_KEY"
+
 [ ! -f "$WORKDIR/standby.ts" ] && { generate_standby || exit 1; }
 
 # ───────────────────────────────────────────────
