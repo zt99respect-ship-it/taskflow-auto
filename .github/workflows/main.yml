@@ -50,7 +50,7 @@ jobs:
       - name: Takeover & broadcast
         env:
           RESTREAM_KEY: 're_12394050_event67e185b829014094a368d4e64b5c4241'
-          STREAMERS_LIST: 'drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx'
+          STREAMERS_LIST: 'drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,SODRY,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PARENT_RUN_ID: ${{ inputs.parent_run_id }}
           MY_RUN_ID: ${{ github.run_id }}
