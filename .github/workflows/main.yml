@@ -65,7 +65,7 @@ jobs:
               [ "$STATUS" = "completed" ] && { echo "✅ Parent dead"; break; }
             done
           else
-            echo "🔪 Cron mode: killing stale runs"
+            echo "🔪 Cron/Manual mode: killing stale in_progress runs"
             for ID in $(gh run list --workflow=main.yml --status=in_progress --json databaseId -q '.[].databaseId' 2>/dev/null | grep -v "^${MY_RUN_ID}$"); do
               gh run cancel "$ID" 2>/dev/null || true
             done
