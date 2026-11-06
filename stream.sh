@@ -3,10 +3,10 @@ set +m
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
-#  Respect Broadcast — V11 (Infinite Relay, 3-5s switching)
+#  Respect Broadcast — V11.1 (Fixed Segfault + Infinite Loop)
 # ═══════════════════════════════════════════════════════════════
 
-STREAMERS_LIST="${STREAMERS_LIST:-drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx}"
+STREAMERS_LIST="${STREAMERS_LIST:-drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,SODRY,Moustache,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx}"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 WORKDIR="/tmp/standby_respect"
@@ -100,7 +100,6 @@ PYEOF
     return 0
 }
 
-# ⬇️⬇️⬇️ الفحص حق التجهيز صار هنا (قبل فحص المفتاح) ⬇️⬇️⬇️
 if [ "${PREPARE_ONLY:-0}" = "1" ]; then
     generate_standby
     exit $?
@@ -189,11 +188,13 @@ start_output_with_retry() {
     while [ $i -lt $max_attempts ]; do
         i=$((i+1))
         rm -f /tmp/out.prog
+        # 🔥 التعديل هنا: ضغط الصوت aac بدل copy لمنع الكراش
         ffmpeg -y -hide_banner -loglevel warning -nostdin \
             -thread_queue_size 512 \
             -fflags +genpts+discardcorrupt \
+            -err_detect ignore_err \
             -f mpegts -i "$FIFO" \
-            -map 0:v:0 -map 0:a:0? -c:v copy -c:a copy \
+            -map 0:v:0 -map 0:a:0? -c:v copy -c:a aac -b:a 128k -ar 44100 -ac 2 \
             -max_muxing_queue_size 4096 \
             -flvflags no_duration_filesize \
             -progress /tmp/out.prog -stats_period 1 \
@@ -265,7 +266,7 @@ start_prod_live() {
     return 1
 }
 
-# Parallel scan (8s max for 25 streamers)
+# Parallel scan
 find_active_streamer() {
     local tmpdir
     tmpdir=$(mktemp -d)
@@ -315,7 +316,7 @@ restart_output_chain() {
 }
 
 # ───────────────────────────────────────────────
-#  Schedule next run (5h20m from now)
+#  Schedule next run
 # ───────────────────────────────────────────────
 if [ -n "${MY_RUN_ID:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
     echo "📅 Scheduling next run in 5h20m"
@@ -336,7 +337,7 @@ fi
 # ───────────────────────────────────────────────
 #  Boot
 # ───────────────────────────────────────────────
-echo "🚀 Respect Relay V11 starting..."
+echo "🚀 Respect Relay V11.1 starting..."
 setup_fifo
 start_output_with_retry || { echo "❌ FATAL: initial connect failed"; exit 1; }
 start_keeper || { echo "❌ FATAL: keeper failed"; exit 1; }
@@ -358,6 +359,7 @@ while true; do
     if ! kill -0 "$PROD" 2>/dev/null; then
         echo "⚠️ Producer died"
         stop_producer
+        sleep 5  # 🔥 التعديل هنا: انتظار 5 ثواني لمنع الحلقة اللانهائية
         start_best_source
         continue
     fi
