@@ -3,7 +3,7 @@ set +m
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
-#  Respect Broadcast — V14 (FIFO EOF Fix - No Segfault)
+#  Respect Broadcast — V15 (BULLETPROOF - No Segfault / H.265 Fix)
 # ═══════════════════════════════════════════════════════════════
 
 STREAMERS_LIST="${STREAMERS_LIST:-drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx}"
@@ -187,11 +187,13 @@ start_output_with_retry() {
     while [ $i -lt $max_attempts ]; do
         i=$((i+1))
         rm -f /tmp/out.prog
-        # التعديل: شلنا +nobuffer و thread_queue_size عشان نمنع الكراش
+        # 🔥 التعديل الجوهري: معالجة الفيديو بدل نقله + تخصيص خيوط المعالج لمنع الانهيار
         ffmpeg -y -hide_banner -loglevel warning -nostdin \
+            -analyzeduration 10M -probesize 10M \
             -f mpegts -i "$FIFO" \
-            -map 0:v:0 -map 0:a:0? -c:v copy -c:a aac -b:a 128k -ar 44100 -ac 2 \
-            -flvflags no_duration_filesize \
+            -map 0:v:0 -map 0:a:0? \
+            -c:v libx264 -preset ultrafast -tune zerolatency -threads 2 -pix_fmt yuv420p -g 60 -r 60 \
+            -c:a aac -b:a 128k -ar 44100 -ac 2 \
             -progress /tmp/out.prog -stats_period 1 \
             -f flv "$RESTREAM_URL" >/tmp/out.log 2>&1 &
         OUT=$!
@@ -342,7 +344,7 @@ if [ -n "${MY_RUN_ID:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
     " >/tmp/sched.log 2>&1 < /dev/null &
 fi
 
-echo "🚀 Respect Relay V14 starting..."
+echo "🚀 Respect Relay V15 starting..."
 setup_fifo
 start_output_with_retry || { echo "❌ FATAL: initial connect failed"; exit 1; }
 start_keeper || { echo "❌ FATAL: keeper failed"; exit 1; }
