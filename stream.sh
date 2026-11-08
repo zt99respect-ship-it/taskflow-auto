@@ -3,10 +3,10 @@ set +m
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
-#  Respect Broadcast — V11.1 (Fixed Segfault + Infinite Loop)
+#  Respect Broadcast — V11.3 (Stable Producer + Kick 403 Fix)
 # ═══════════════════════════════════════════════════════════════
 
-STREAMERS_LIST="${STREAMERS_LIST:-drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,SODRY,Moustache,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx}"
+STREAMERS_LIST="${STREAMERS_LIST:-drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx}"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 WORKDIR="/tmp/standby_respect"
@@ -188,7 +188,6 @@ start_output_with_retry() {
     while [ $i -lt $max_attempts ]; do
         i=$((i+1))
         rm -f /tmp/out.prog
-        # 🔥 التعديل هنا: ضغط الصوت aac بدل copy لمنع الكراش
         ffmpeg -y -hide_banner -loglevel warning -nostdin \
             -thread_queue_size 512 \
             -fflags +genpts+discardcorrupt \
@@ -246,8 +245,15 @@ start_prod_standby() {
 start_prod_live() {
     local NAME="$1"
     rm -f /tmp/prod.prog
+    # 🔥 التعديل هنا: تمرير خيارات لـ streamlink لمنع الانقطاع المفاجئ
     setsid bash -c '
-        streamlink --http-header "User-Agent='"$UA"'" "https://kick.com/'"$NAME"'" best --stdout 2>/dev/null | \
+        streamlink \
+            --http-header "User-Agent='"$UA"'" \
+            --stream-timeout 60 \
+            --hls-live-edge 3 \
+            --retry-streams 5 \
+            --retry-max 10 \
+            "https://kick.com/'"$NAME"'" best --stdout 2>/tmp/sl_err.log | \
         ffmpeg -y -hide_banner -loglevel warning -nostdin \
             -thread_queue_size 512 \
             -fflags +genpts+discardcorrupt \
@@ -266,7 +272,6 @@ start_prod_live() {
     return 1
 }
 
-# Parallel scan
 find_active_streamer() {
     local tmpdir
     tmpdir=$(mktemp -d)
@@ -337,7 +342,7 @@ fi
 # ───────────────────────────────────────────────
 #  Boot
 # ───────────────────────────────────────────────
-echo "🚀 Respect Relay V11.1 starting..."
+echo "🚀 Respect Relay V11.3 starting..."
 setup_fifo
 start_output_with_retry || { echo "❌ FATAL: initial connect failed"; exit 1; }
 start_keeper || { echo "❌ FATAL: keeper failed"; exit 1; }
@@ -359,7 +364,7 @@ while true; do
     if ! kill -0 "$PROD" 2>/dev/null; then
         echo "⚠️ Producer died"
         stop_producer
-        sleep 5  # 🔥 التعديل هنا: انتظار 5 ثواني لمنع الحلقة اللانهائية
+        sleep 5
         start_best_source
         continue
     fi
