@@ -3,7 +3,7 @@ set +m
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
-#  Respect Broadcast — V16 (Exact Single-Streamer Logic)
+#  Respect Broadcast — V17 (EXACT Single-Streamer Logic)
 # ═══════════════════════════════════════════════════════════════
 
 STREAMERS_LIST="${STREAMERS_LIST:-drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx}"
@@ -17,7 +17,7 @@ IFS=',' read -r -a STREAMERS <<< "$STREAMERS_LIST"
 export STREAMERS_LIST UA WORKDIR
 
 # ───────────────────────────────────────────────
-#  Standby screen generation
+#  Standby screen generation (نفس الستريمر الواحد)
 # ───────────────────────────────────────────────
 generate_standby() {
     echo "🎨 Generating standby screen..."
@@ -111,12 +111,9 @@ RESTREAM_URL="rtmp://live.restream.io/live/$RESTREAM_KEY"
 
 [ ! -f "$WORKDIR/standby.ts" ] && { generate_standby || exit 1; }
 
-# ───────────────────────────────────────────────
-#  Process management
-# ───────────────────────────────────────────────
 OUT=""; PROD=""; KEEPER=""
-ACTIVE_STREAMER=""
 MODE="STANDBY"
+OFFLINE_START=0
 OUT_STARTED=0; PROD_STARTED=0
 OUT_PREV_FRAME=""; PROD_PREV_FRAME=""
 OUT_STALL=0; PROD_STALL=0
@@ -264,7 +261,6 @@ start_prod_live() {
     return 1
 }
 
-# فحص متوازي باستخدام streamlink (بدون API)
 find_active_streamer() {
     local tmpdir
     tmpdir=$(mktemp -d)
@@ -292,37 +288,31 @@ find_active_streamer() {
     return 1
 }
 
-start_best_source() {
-    local found
-    found=$(find_active_streamer)
-    if [ -n "$found" ]; then
-        ACTIVE_STREAMER="$found"
-        start_prod_live "$found" && return 0
-    fi
-    ACTIVE_STREAMER=""
-    start_prod_standby
-}
-
 restart_output_chain() {
-    echo "♻️  Full chain restart"
+    echo "♻️ Full chain restart"
     stop_producer; stop_output; stop_keeper
     setup_fifo
     start_output_with_retry || { echo "❌ FATAL: cannot connect"; exit 1; }
     start_keeper || { echo "❌ FATAL: keeper failed"; exit 1; }
-    start_best_source
+    
+    FOUND=$(find_active_streamer)
+    if [ -n "$FOUND" ]; then
+        OFFLINE_START=0
+        start_prod_live "$FOUND" || start_prod_standby
+    else
+        OFFLINE_START=$(date +%s)
+        start_prod_standby
+    fi
     LAST_SCAN=$(date +%s)
 }
 
-# ───────────────────────────────────────────────
-#  Schedule next run
-# ───────────────────────────────────────────────
 if [ -n "${MY_RUN_ID:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
-    echo "📅 Scheduling next run in 5h20m"
+    echo "📅 Scheduling next run in 5h15m"
     setsid nohup bash -c "
-        sleep 19200
+        sleep 18900
         for i in 1 2 3 4 5; do
             if gh workflow run main.yml --ref '${GITHUB_REF_NAME:-main}' -f parent_run_id=$MY_RUN_ID; then
-                echo \"✅ Next run dispatched (attempt \$i)\"
+                echo \"✅ Next run dispatched\"
                 exit 0
             fi
             sleep 60
@@ -330,19 +320,21 @@ if [ -n "${MY_RUN_ID:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
     " >/tmp/sched.log 2>&1 < /dev/null &
 fi
 
-# ───────────────────────────────────────────────
-#  Boot
-# ───────────────────────────────────────────────
-echo "🚀 Respect Relay V16 starting..."
+echo "🚀 Respect Relay V17 starting..."
 setup_fifo
 start_output_with_retry || { echo "❌ FATAL: initial connect failed"; exit 1; }
 start_keeper || { echo "❌ FATAL: keeper failed"; exit 1; }
-start_best_source
+
+FOUND=$(find_active_streamer)
+if [ -n "$FOUND" ]; then
+    OFFLINE_START=0
+    start_prod_live "$FOUND" || start_prod_standby
+else
+    OFFLINE_START=$(date +%s)
+    start_prod_standby
+fi
 LAST_SCAN=$(date +%s)
 
-# ───────────────────────────────────────────────
-#  Main loop
-# ───────────────────────────────────────────────
 while true; do
     NOW=$(date +%s)
 
@@ -355,25 +347,26 @@ while true; do
     if ! kill -0 "$PROD" 2>/dev/null; then
         echo "⚠️ Producer died"
         stop_producer
-        sleep 5
-        start_best_source
+        FOUND=$(find_active_streamer)
+        if [ -n "$FOUND" ]; then
+            OFFLINE_START=0
+            start_prod_live "$FOUND" || start_prod_standby
+        else
+            [ "$OFFLINE_START" -eq 0 ] && OFFLINE_START=$NOW
+            start_prod_standby
+        fi
         continue
     fi
 
-    if [ $((NOW - OUT_STARTED)) -ge 15 ]; then
+    if [ $((NOW - OUT_STARTED)) -ge 20 ]; then
         F=$(get_frame /tmp/out.prog)
-        MT=$(stat -c %Y /tmp/out.prog 2>/dev/null || echo 0)
-        if [ $((NOW - MT)) -ge 15 ]; then
-            OUT_STALL=15
+        MT=$(stat -c %Y /tmp/out.prog 2>/dev/null || echo $OUT_STARTED)
+        if [ $((NOW - MT)) -ge 20 ]; then OUT_STALL=20; 
         elif [[ "$F" =~ ^[0-9]+$ ]]; then
-            if [ -n "$OUT_PREV_FRAME" ] && [ "$F" -le "$OUT_PREV_FRAME" ]; then
-                OUT_STALL=$((OUT_STALL + 1))
-            else
-                OUT_STALL=0
-            fi
+            if [ -n "$OUT_PREV_FRAME" ] && [ "$F" -le "$OUT_PREV_FRAME" ]; then OUT_STALL=$((OUT_STALL + 1)); else OUT_STALL=0; fi
             OUT_PREV_FRAME="$F"
         fi
-        if [ "$OUT_STALL" -ge 15 ]; then
+        if [ "$OUT_STALL" -ge 20 ]; then
             echo "⚠️ Output stalled"
             restart_output_chain
             continue
@@ -382,31 +375,29 @@ while true; do
 
     if [ $((NOW - PROD_STARTED)) -ge 15 ]; then
         F=$(get_frame /tmp/prod.prog)
-        MT=$(stat -c %Y /tmp/prod.prog 2>/dev/null || echo 0)
-        if [ $((NOW - MT)) -ge 12 ]; then
-            PROD_STALL=12
+        MT=$(stat -c %Y /tmp/prod.prog 2>/dev/null || echo $PROD_STARTED)
+        if [ $((NOW - MT)) -ge 15 ]; then PROD_STALL=15;
         elif [[ "$F" =~ ^[0-9]+$ ]]; then
-            if [ -n "$PROD_PREV_FRAME" ] && [ "$F" -le "$PROD_PREV_FRAME" ]; then
-                PROD_STALL=$((PROD_STALL + 1))
-            else
-                PROD_STALL=0
-            fi
+            if [ -n "$PROD_PREV_FRAME" ] && [ "$F" -le "$PROD_PREV_FRAME" ]; then PROD_STALL=$((PROD_STALL + 1)); else PROD_STALL=0; fi
             PROD_PREV_FRAME="$F"
         fi
-        if [ "$PROD_STALL" -ge 12 ]; then
+        if [ "$PROD_STALL" -ge 15 ]; then
             echo "⚠️ Producer stalled"
             stop_producer
-            start_best_source
+            FOUND=$(find_active_streamer)
+            if [ -n "$FOUND" ]; then OFFLINE_START=0; start_prod_live "$FOUND" || start_prod_standby
+            else [ "$OFFLINE_START" -eq 0 ] && OFFLINE_START=$NOW; start_prod_standby; fi
             continue
         fi
     fi
 
-    if [ $((NOW - LAST_SCAN)) -ge "$SCAN_INTERVAL" ]; then
+    if [ $((NOW - LAST_SCAN)) -ge 15 ]; then
         LAST_SCAN=$NOW
         FOUND=$(find_active_streamer)
         if [ -n "$FOUND" ]; then
+            OFFLINE_START=0
             if [ "$MODE" != "LIVE" ] || [ "$ACTIVE_STREAMER" != "$FOUND" ]; then
-                echo "🔀 Switching to: $FOUND"
+                echo "🔀 Streamer is LIVE. Switching to: $FOUND"
                 stop_producer
                 ACTIVE_STREAMER="$FOUND"
                 start_prod_live "$FOUND" || start_prod_standby
@@ -417,6 +408,15 @@ while true; do
                 stop_producer
                 ACTIVE_STREAMER=""
                 start_prod_standby
+                OFFLINE_START=$NOW
+            fi
+            
+            if [ "$OFFLINE_START" -gt 0 ]; then
+                OFFLINE_DURATION=$((NOW - OFFLINE_START))
+                if [ "$OFFLINE_DURATION" -ge 1200 ]; then
+                    echo "🛑 All streamers offline for 20 minutes. Terminating job."
+                    exit 0
+                fi
             fi
         fi
     fi
