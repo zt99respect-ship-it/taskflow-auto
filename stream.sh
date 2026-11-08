@@ -3,7 +3,7 @@ set +m
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
-#  Respect Broadcast — V13 (BULLETPROOF - No Segfault)
+#  Respect Broadcast — V14 (FIFO EOF Fix - No Segfault)
 # ═══════════════════════════════════════════════════════════════
 
 STREAMERS_LIST="${STREAMERS_LIST:-drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx}"
@@ -21,9 +21,6 @@ if ! command -v yt-dlp &> /dev/null; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
-# ───────────────────────────────────────────────
-#  Standby screen generation
-# ───────────────────────────────────────────────
 generate_standby() {
     echo "🎨 Generating standby screen..."
     mkdir -p ~/.fonts
@@ -117,9 +114,6 @@ RESTREAM_URL="rtmp://live.restream.io/live/$RESTREAM_KEY"
 
 [ ! -f "$WORKDIR/standby.ts" ] && { generate_standby || exit 1; }
 
-# ───────────────────────────────────────────────
-#  Process management
-# ───────────────────────────────────────────────
 OUT=""; PROD=""; KEEPER=""
 ACTIVE_STREAMER=""
 MODE="STANDBY"
@@ -193,15 +187,10 @@ start_output_with_retry() {
     while [ $i -lt $max_attempts ]; do
         i=$((i+1))
         rm -f /tmp/out.prog
-        # 🔥 هذا هو التعديل الجوهري: معالجة الفيديو بدل نقله لمنع الانهيار
+        # التعديل: شلنا +nobuffer و thread_queue_size عشان نمنع الكراش
         ffmpeg -y -hide_banner -loglevel warning -nostdin \
-            -thread_queue_size 512 \
-            -fflags +genpts+discardcorrupt+nobuffer \
             -f mpegts -i "$FIFO" \
-            -map 0:v:0 -map 0:a:0? \
-            -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 60 -r 60 \
-            -c:a aac -b:a 128k -ar 44100 -ac 2 \
-            -max_muxing_queue_size 4096 \
+            -map 0:v:0 -map 0:a:0? -c:v copy -c:a aac -b:a 128k -ar 44100 -ac 2 \
             -flvflags no_duration_filesize \
             -progress /tmp/out.prog -stats_period 1 \
             -f flv "$RESTREAM_URL" >/tmp/out.log 2>&1 &
@@ -235,11 +224,16 @@ wait_prod_ready() {
 
 start_prod_standby() {
     rm -f /tmp/prod.prog
-    setsid ffmpeg -y -hide_banner -loglevel warning -nostdin \
-        -re -stream_loop -1 -i "$WORKDIR/standby.ts" \
-        -c copy -mpegts_flags +resend_headers \
-        -progress /tmp/prod.prog -stats_period 1 \
-        -f mpegts "$FIFO" >/tmp/prod.log 2>&1 &
+    # التعديل: حلقة لا نهائية باش عشان الأنبوب ما يفضى
+    setsid bash -c '
+        while true; do
+            ffmpeg -y -hide_banner -loglevel warning -re -i "'"$WORKDIR/standby.ts"'" \
+                -c copy -mpegts_flags +resend_headers \
+                -progress /tmp/prod.prog -stats_period 1 \
+                -f mpegts "'"$FIFO"'"
+            sleep 0.1
+        done
+    ' >/tmp/prod.log 2>&1 &
     PROD=$!
     PROD_STARTED=$(date +%s); PROD_PREV_FRAME=""; PROD_STALL=0
     if wait_prod_ready; then
@@ -259,24 +253,22 @@ start_prod_live() {
                 -f "best[protocol^=m3u8]/best" -o - \
                 "https://kick.com/'"$NAME"'" 2>/tmp/yt_err.log | \
             ffmpeg -y -hide_banner -loglevel warning -nostdin \
-                -thread_queue_size 512 -fflags +genpts+discardcorrupt \
+                -fflags +genpts+discardcorrupt \
                 -i pipe:0 -c:v copy -c:a aac -b:a 160k -ar 44100 -ac 2 \
                 -mpegts_flags +resend_headers -progress /tmp/prod.prog \
                 -stats_period 1 -f mpegts "'"$FIFO"'" >/tmp/prod.log 2>&1
 
-            echo "yt-dlp dropped, retrying with streamlink fallback in 3s..." >> /tmp/prod.log
             sleep 3
             
             streamlink --http-header "User-Agent='"$UA"'" \
                 --http-header "Referer=https://kick.com/" \
                 "https://kick.com/'"$NAME"'" best --stdout 2>/dev/null | \
             ffmpeg -y -hide_banner -loglevel warning -nostdin \
-                -thread_queue_size 512 -fflags +genpts+discardcorrupt \
+                -fflags +genpts+discardcorrupt \
                 -i pipe:0 -c:v copy -c:a aac -b:a 160k -ar 44100 -ac 2 \
                 -mpegts_flags +resend_headers -progress /tmp/prod.prog \
                 -stats_period 1 -f mpegts "'"$FIFO"'" >/tmp/prod.log 2>&1
 
-            echo "streamlink dropped, retrying yt-dlp in 3s..." >> /tmp/prod.log
             sleep 3
         done
     ' >/dev/null 2>&1 &
@@ -350,7 +342,7 @@ if [ -n "${MY_RUN_ID:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
     " >/tmp/sched.log 2>&1 < /dev/null &
 fi
 
-echo "🚀 Respect Relay V13 starting..."
+echo "🚀 Respect Relay V14 starting..."
 setup_fifo
 start_output_with_retry || { echo "❌ FATAL: initial connect failed"; exit 1; }
 start_keeper || { echo "❌ FATAL: keeper failed"; exit 1; }
