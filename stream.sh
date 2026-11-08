@@ -3,7 +3,7 @@ set +m
 set -uo pipefail
 
 # ═══════════════════════════════════════════════════════════════
-#  Respect Broadcast — V15 (BULLETPROOF - No Segfault / H.265 Fix)
+#  Respect Broadcast — V16 (Exact Single-Streamer Logic)
 # ═══════════════════════════════════════════════════════════════
 
 STREAMERS_LIST="${STREAMERS_LIST:-drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx}"
@@ -16,11 +16,9 @@ KEEPER_READY="/tmp/relay_keeper.ready"
 IFS=',' read -r -a STREAMERS <<< "$STREAMERS_LIST"
 export STREAMERS_LIST UA WORKDIR
 
-if ! command -v yt-dlp &> /dev/null; then
-    pip3 install --user --break-system-packages --quiet yt-dlp
-    export PATH="$HOME/.local/bin:$PATH"
-fi
-
+# ───────────────────────────────────────────────
+#  Standby screen generation
+# ───────────────────────────────────────────────
 generate_standby() {
     echo "🎨 Generating standby screen..."
     mkdir -p ~/.fonts
@@ -109,11 +107,13 @@ fi
 
 RESTREAM_KEY="${RESTREAM_KEY:-}"
 [ -z "$RESTREAM_KEY" ] && { echo "❌ RESTREAM_KEY empty"; exit 1; }
-
 RESTREAM_URL="rtmp://live.restream.io/live/$RESTREAM_KEY"
 
 [ ! -f "$WORKDIR/standby.ts" ] && { generate_standby || exit 1; }
 
+# ───────────────────────────────────────────────
+#  Process management
+# ───────────────────────────────────────────────
 OUT=""; PROD=""; KEEPER=""
 ACTIVE_STREAMER=""
 MODE="STANDBY"
@@ -187,13 +187,14 @@ start_output_with_retry() {
     while [ $i -lt $max_attempts ]; do
         i=$((i+1))
         rm -f /tmp/out.prog
-        # 🔥 التعديل الجوهري: معالجة الفيديو بدل نقله + تخصيص خيوط المعالج لمنع الانهيار
         ffmpeg -y -hide_banner -loglevel warning -nostdin \
-            -analyzeduration 10M -probesize 10M \
+            -thread_queue_size 512 \
+            -fflags +genpts+discardcorrupt \
             -f mpegts -i "$FIFO" \
-            -map 0:v:0 -map 0:a:0? \
-            -c:v libx264 -preset ultrafast -tune zerolatency -threads 2 -pix_fmt yuv420p -g 60 -r 60 \
-            -c:a aac -b:a 128k -ar 44100 -ac 2 \
+            -map 0:v:0 -map 0:a:0? -c:v copy -c:a copy \
+            -max_muxing_queue_size 4096 \
+            -flvflags no_duration_filesize \
+            -rtmp_live live \
             -progress /tmp/out.prog -stats_period 1 \
             -f flv "$RESTREAM_URL" >/tmp/out.log 2>&1 &
         OUT=$!
@@ -215,7 +216,7 @@ start_output_with_retry() {
 
 wait_prod_ready() {
     local i=0
-    while [ $i -lt 60 ]; do
+    while [ $i -lt 50 ]; do
         kill -0 "$PROD" 2>/dev/null || return 1
         local f=$(get_frame /tmp/prod.prog)
         [[ "$f" =~ ^[0-9]+$ ]] && [ "$f" -gt 0 ] && return 0
@@ -226,16 +227,11 @@ wait_prod_ready() {
 
 start_prod_standby() {
     rm -f /tmp/prod.prog
-    # التعديل: حلقة لا نهائية باش عشان الأنبوب ما يفضى
-    setsid bash -c '
-        while true; do
-            ffmpeg -y -hide_banner -loglevel warning -re -i "'"$WORKDIR/standby.ts"'" \
-                -c copy -mpegts_flags +resend_headers \
-                -progress /tmp/prod.prog -stats_period 1 \
-                -f mpegts "'"$FIFO"'"
-            sleep 0.1
-        done
-    ' >/tmp/prod.log 2>&1 &
+    setsid ffmpeg -y -hide_banner -loglevel warning -nostdin \
+        -re -stream_loop -1 -i "$WORKDIR/standby.ts" \
+        -c copy -mpegts_flags +resend_headers \
+        -progress /tmp/prod.prog -stats_period 1 \
+        -f mpegts "$FIFO" >/tmp/prod.log 2>&1 &
     PROD=$!
     PROD_STARTED=$(date +%s); PROD_PREV_FRAME=""; PROD_STALL=0
     if wait_prod_ready; then
@@ -249,30 +245,15 @@ start_prod_live() {
     local NAME="$1"
     rm -f /tmp/prod.prog
     setsid bash -c '
-        while true; do
-            yt-dlp --no-warnings --quiet --no-check-certificates \
-                --user-agent "'"$UA"'" \
-                -f "best[protocol^=m3u8]/best" -o - \
-                "https://kick.com/'"$NAME"'" 2>/tmp/yt_err.log | \
-            ffmpeg -y -hide_banner -loglevel warning -nostdin \
-                -fflags +genpts+discardcorrupt \
-                -i pipe:0 -c:v copy -c:a aac -b:a 160k -ar 44100 -ac 2 \
-                -mpegts_flags +resend_headers -progress /tmp/prod.prog \
-                -stats_period 1 -f mpegts "'"$FIFO"'" >/tmp/prod.log 2>&1
-
-            sleep 3
-            
-            streamlink --http-header "User-Agent='"$UA"'" \
-                --http-header "Referer=https://kick.com/" \
-                "https://kick.com/'"$NAME"'" best --stdout 2>/dev/null | \
-            ffmpeg -y -hide_banner -loglevel warning -nostdin \
-                -fflags +genpts+discardcorrupt \
-                -i pipe:0 -c:v copy -c:a aac -b:a 160k -ar 44100 -ac 2 \
-                -mpegts_flags +resend_headers -progress /tmp/prod.prog \
-                -stats_period 1 -f mpegts "'"$FIFO"'" >/tmp/prod.log 2>&1
-
-            sleep 3
-        done
+        streamlink --http-header "User-Agent='"$UA"'" "https://kick.com/'"$NAME"'" best --stdout 2>/dev/null | \
+        ffmpeg -y -hide_banner -loglevel warning -nostdin \
+            -thread_queue_size 512 \
+            -fflags +genpts+discardcorrupt \
+            -i pipe:0 \
+            -c:v copy -c:a aac -b:a 160k -ar 44100 -ac 2 \
+            -mpegts_flags +resend_headers \
+            -progress /tmp/prod.prog -stats_period 1 \
+            -f mpegts "'"$FIFO"'" >/tmp/prod.log 2>&1
     ' >/dev/null 2>&1 &
     PROD=$!
     PROD_STARTED=$(date +%s); PROD_PREV_FRAME=""; PROD_STALL=0
@@ -283,17 +264,19 @@ start_prod_live() {
     return 1
 }
 
+# فحص متوازي باستخدام streamlink (بدون API)
 find_active_streamer() {
+    local tmpdir
+    tmpdir=$(mktemp -d)
     local pids=()
-    local tmpdir=$(mktemp -d)
     for S in "${STREAMERS[@]}"; do
         S=$(echo "$S" | xargs)
         [ -z "$S" ] && continue
         (
-            IS_LIVE=$(curl -s -m 5 -A "$UA" "https://kick.com/api/v2/channels/$S" | grep -o '"is_live":true')
-            if [ -n "$IS_LIVE" ]; then
-                : > "$tmpdir/$S"
-            fi
+            URL=$(timeout 8 streamlink --http-header "User-Agent=$UA" \
+                "https://kick.com/$S" best --stream-url 2>/dev/null \
+                | grep -m1 "^http")
+            [ -n "$URL" ] && : > "$tmpdir/$S"
         ) &
         pids+=($!)
     done
@@ -330,6 +313,9 @@ restart_output_chain() {
     LAST_SCAN=$(date +%s)
 }
 
+# ───────────────────────────────────────────────
+#  Schedule next run
+# ───────────────────────────────────────────────
 if [ -n "${MY_RUN_ID:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
     echo "📅 Scheduling next run in 5h20m"
     setsid nohup bash -c "
@@ -344,13 +330,19 @@ if [ -n "${MY_RUN_ID:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
     " >/tmp/sched.log 2>&1 < /dev/null &
 fi
 
-echo "🚀 Respect Relay V15 starting..."
+# ───────────────────────────────────────────────
+#  Boot
+# ───────────────────────────────────────────────
+echo "🚀 Respect Relay V16 starting..."
 setup_fifo
 start_output_with_retry || { echo "❌ FATAL: initial connect failed"; exit 1; }
 start_keeper || { echo "❌ FATAL: keeper failed"; exit 1; }
 start_best_source
 LAST_SCAN=$(date +%s)
 
+# ───────────────────────────────────────────────
+#  Main loop
+# ───────────────────────────────────────────────
 while true; do
     NOW=$(date +%s)
 
