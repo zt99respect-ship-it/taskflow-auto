@@ -5,7 +5,7 @@ set +m
 #  SXB Broadcast — Infinite Handoff (3s Gap)
 # ═══════════════════════════════════════════════════
 
-STREAMER="PEERLESS"
+STREAMER="Imonky_d"
 TITLE_AR="توقف البث من الستريمر "
 SUBTITLE_AR="بث ريسبكت!"
 LOGO_URL="https://a.top4top.io/p_394102x460.png"
