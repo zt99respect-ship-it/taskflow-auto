@@ -1,22 +1,11 @@
-name: Respect 24-7
+name: SXB 24-7 Seamless Handoff
 
 on:
   workflow_dispatch:
-    inputs:
-      parent_run_id:
-        description: 'Run ID to kill (previous run)'
-        required: false
-        type: string
-  schedule:
-    - cron: '0 */6 * * *'
 
 permissions:
   actions: write
   contents: read
-
-concurrency:
-  group: respect-${{ github.run_id }}
-  cancel-in-progress: false
 
 jobs:
   broadcast:
@@ -24,52 +13,153 @@ jobs:
     timeout-minutes: 355
 
     steps:
-      - name: Checkout
+      - name: جلب الملفات
         uses: actions/checkout@v4
 
-      - name: Install ffmpeg + streamlink + fonts
+      - name: تثبيت الأدوات والخطوط (مقاوم للتعليق)
         run: |
-          set -e
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          # إيقاف المؤقتات التي تحجز قفل dpkg
+          sudo systemctl stop apt-daily.service apt-daily-upgrade.service unattended-upgrades.service 2>/dev/null || true
+          sudo systemctl kill --kill-who=all apt-daily.service apt-daily-upgrade.service unattended-upgrades.service 2>/dev/null || true
+
+          # إزالة مستودعات لا نحتاجها لتقليل وقت التحديث
           sudo rm -f /etc/apt/sources.list.d/azure-cli.list /etc/apt/sources.list.d/microsoft-prod.list
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg fontconfig libraqm0 libfribidi0
-          pip3 install --user --break-system-packages --quiet streamlink Pillow
+
+          # تحديث bounded
+          timeout 180 sudo -E apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120 update -qq
+
+          # تثبيت bounded + إعادة محاولة
+          install_ok=0
+          for attempt in 1 2 3; do
+            if timeout 300 sudo -E apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120 install -y --no-install-recommends ffmpeg fontconfig libraqm0 libfribidi0; then
+              install_ok=1
+              break
+            fi
+            echo "⚠️ محاولة ffmpeg $attempt فشلت/علّقت. إعادة محاولة بعد 5 ثوانٍ..."
+            sleep 5
+          done
+          [ "$install_ok" -eq 1 ] || { echo "❌ فشل تثبيت ffmpeg بعد 3 محاولات"; exit 1; }
+
+          pip3 install --user --break-system-packages --quiet --upgrade Pillow streamlink
+
           mkdir -p ~/.fonts
-          curl -sL --max-time 30 "https://raw.githubusercontent.com/google/fonts/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf" -o ~/.fonts/Cairo-var.ttf || true
-          curl -sL --max-time 30 "https://raw.githubusercontent.com/google/fonts/main/ofl/orbitron/Orbitron%5Bwght%5D.ttf" -o ~/.fonts/Orbitron-var.ttf || true
-          fc-cache -f >/dev/null 2>&1 || true
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          for URL in \
+            "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf" \
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf"; do
+            curl -sL --max-time 30 "$URL" -o ~/.fonts/Cairo-var.ttf 2>/dev/null || true
+            [ "$(stat -c%s ~/.fonts/Cairo-var.ttf 2>/dev/null || echo 0)" -gt 50000 ] && break
+          done
+          for URL in \
+            "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/orbitron/Orbitron%5Bwght%5D.ttf" \
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/orbitron/Orbitron%5Bwght%5D.ttf"; do
+            curl -sL --max-time 30 "$URL" -o ~/.fonts/Orbitron-var.ttf 2>/dev/null || true
+            [ "$(stat -c%s ~/.fonts/Orbitron-var.ttf 2>/dev/null || echo 0)" -gt 20000 ] && break
+          done
+          fc-cache -f >/dev/null 2>&1
 
-      - name: Pre-build standby (while old run is still broadcasting)
+      - name: PATH
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: جدولة الرن التالي (بعد 5س20د)
         env:
-          STREAMERS_LIST: 'S5B,iMonkey_D,drb7h,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,FHLWY,Hook,okb8,wolf,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          chmod +x stream.sh
-          PREPARE_ONLY=1 ./stream.sh
+          setsid nohup bash -c "
+            sleep 19200
+            gh workflow run main.yml --ref '${{ github.ref_name }}'
+          " >/tmp/sched.log 2>&1 < /dev/null &
+          echo "✅ تم جدولة الرن التالي بعد 19200 ثانية"
 
-      - name: Takeover & broadcast
+      - name: تشغيل البث مع التسليم والتسلّم
+        env:
+          RESTREAM_KEY: 'name: SXB 24-7 Seamless Handoff
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  broadcast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+
+    steps:
+      - name: جلب الملفات
+        uses: actions/checkout@v4
+
+      - name: تثبيت الأدوات والخطوط (مقاوم للتعليق)
+        run: |
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          # إيقاف المؤقتات التي تحجز قفل dpkg
+          sudo systemctl stop apt-daily.service apt-daily-upgrade.service unattended-upgrades.service 2>/dev/null || true
+          sudo systemctl kill --kill-who=all apt-daily.service apt-daily-upgrade.service unattended-upgrades.service 2>/dev/null || true
+
+          # إزالة مستودعات لا نحتاجها لتقليل وقت التحديث
+          sudo rm -f /etc/apt/sources.list.d/azure-cli.list /etc/apt/sources.list.d/microsoft-prod.list
+
+          # تحديث bounded
+          timeout 180 sudo -E apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120 update -qq
+
+          # تثبيت bounded + إعادة محاولة
+          install_ok=0
+          for attempt in 1 2 3; do
+            if timeout 300 sudo -E apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=120 install -y --no-install-recommends ffmpeg fontconfig libraqm0 libfribidi0; then
+              install_ok=1
+              break
+            fi
+            echo "⚠️ محاولة ffmpeg $attempt فشلت/علّقت. إعادة محاولة بعد 5 ثوانٍ..."
+            sleep 5
+          done
+          [ "$install_ok" -eq 1 ] || { echo "❌ فشل تثبيت ffmpeg بعد 3 محاولات"; exit 1; }
+
+          pip3 install --user --break-system-packages --quiet --upgrade Pillow streamlink
+
+          mkdir -p ~/.fonts
+          for URL in \
+            "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf" \
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf"; do
+            curl -sL --max-time 30 "$URL" -o ~/.fonts/Cairo-var.ttf 2>/dev/null || true
+            [ "$(stat -c%s ~/.fonts/Cairo-var.ttf 2>/dev/null || echo 0)" -gt 50000 ] && break
+          done
+          for URL in \
+            "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/orbitron/Orbitron%5Bwght%5D.ttf" \
+            "https://raw.githubusercontent.com/google/fonts/main/ofl/orbitron/Orbitron%5Bwght%5D.ttf"; do
+            curl -sL --max-time 30 "$URL" -o ~/.fonts/Orbitron-var.ttf 2>/dev/null || true
+            [ "$(stat -c%s ~/.fonts/Orbitron-var.ttf 2>/dev/null || echo 0)" -gt 20000 ] && break
+          done
+          fc-cache -f >/dev/null 2>&1
+
+      - name: PATH
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: جدولة الرن التالي (بعد 5س20د)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          setsid nohup bash -c "
+            sleep 19200
+            gh workflow run main.yml --ref '${{ github.ref_name }}'
+          " >/tmp/sched.log 2>&1 < /dev/null &
+          echo "✅ تم جدولة الرن التالي بعد 19200 ثانية"
+
+      - name: تشغيل البث مع التسليم والتسلّم
         env:
           RESTREAM_KEY: 're_12394050_event67e185b829014094a368d4e64b5c4241'
-          STREAMERS_LIST: 'drb7h,S5B,ABO8ALYY,ID7O,F1AISAL,xmusabrt,TAF86,abo_khrbaa,Peerless,Seagull,iMonkey_D,FHLWY,Hook,okb8,wolf,SODRY,NASSER,Aymnalsatam,BoQamar,NEFOXD,RAYN,xya7ya,W1pey,ALRND,klash,Sayko_911,ZAiKRx'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PARENT_RUN_ID: ${{ inputs.parent_run_id }}
-          MY_RUN_ID: ${{ github.run_id }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
-          if [ -n "${PARENT_RUN_ID:-}" ]; then
-            echo "🔪 Killing parent run: $PARENT_RUN_ID"
-            gh run cancel "$PARENT_RUN_ID" 2>/dev/null || true
-            for i in $(seq 1 25); do
-              sleep 1
-              STATUS=$(gh run view "$PARENT_RUN_ID" --json status -q '.status' 2>/dev/null || echo "completed")
-              [ "$STATUS" = "completed" ] && { echo "✅ Parent dead"; break; }
-            done
-          else
-            echo "🔪 Cron/Manual mode: killing stale in_progress runs"
-            for ID in $(gh run list --workflow=main.yml --status=in_progress --json databaseId -q '.[].databaseId' 2>/dev/null | grep -v "^${MY_RUN_ID}$"); do
-              gh run cancel "$ID" 2>/dev/null || true
-            done
-            sleep 3
-          fi
-
-          exec ./stream.sh
+          chmod +x stream.sh
+          ./stream.sh'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          chmod +x stream.sh
+          ./stream.sh
