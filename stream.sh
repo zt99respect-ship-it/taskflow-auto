@@ -6,7 +6,7 @@ set +m
 # ═══════════════════════════════════════════════════
 
 STREAMER="Imonky_d"
-TITLE_AR="توقف البث من الستريمر "
+TITLE_AR="انتضار بث مونكي "
 SUBTITLE_AR="بث ريسبكت!"
 LOGO_URL="https://a.top4top.io/p_394102x460.png"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
