@@ -145,10 +145,21 @@ stream_live() {
 }
 
 stream_standby() {
-    echo "⏳ إرسال شاشة الانتظار..."
+    # التعديل الوحيد: استلام الوقت وطباعته على الشاشة
+    local REMAINING=$1
+    local MIN=$((REMAINING / 60))
+    local SEC=$((REMAINING % 60))
+    local TIME_STR=$(printf "%02d:%02d" $MIN $SEC)
+    
+    echo "⏳ إرسال شاشة الانتظار ($TIME_STR)..."
+    
     ffmpeg -hide_banner -loglevel warning -nostdin \
-        -re -stream_loop -1 -i "$WORKDIR/standby.ts" \
-        -c copy -f flv "$RESTREAM_URL"
+        -re -loop 1 -framerate 60 -i "$WORKDIR/bg.png" \
+        -f lavfi -i "anullsrc=r=44100:cl=stereo" \
+        -vf "drawtext=fontfile=$HOME/.fonts/Orbitron-var.ttf:text='$TIME_STR':x=w-tw-100:y=100:fontsize=80:fontcolor=red" \
+        -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 60 -r 30 \
+        -c:a aac -b:a 128k -ar 44100 -ac 2 \
+        -t 15 -f flv "$RESTREAM_URL"
 }
 
 # ═══════════════════════════════════════════════════
@@ -156,15 +167,35 @@ stream_standby() {
 # ═══════════════════════════════════════════════════
 echo "🚀 بدء المراقبة..."
 
+# التعديل الوحيد: متغيرات العداد
+OFFLINE_START=0
+MAX_OFFLINE=600
+
 while true; do
     URL=$(timeout 10 streamlink --http-header "User-Agent=$UA" "https://kick.com/$STREAMER" best --stream-url 2>/dev/null | grep -m1 "^http")
 
     if [ -n "$URL" ]; then
+        # التعديل الوحيد: تصفير العداد إذا كان يبث
+        OFFLINE_START=0
         stream_live
         echo "⚠️ انقطع البث. إعادة الفحص بعد 5 ثواني..."
         sleep 5
     else
-        stream_standby
+        # التعديل الوحيد: حساب الوقت وإيقاف السكربت إذا وصل 10 دقائق
+        if [ "$OFFLINE_START" -eq 0 ]; then
+            OFFLINE_START=$(date +%s)
+        fi
+        
+        NOW=$(date +%s)
+        ELAPSED=$((NOW - OFFLINE_START))
+        REMAINING=$((MAX_OFFLINE - ELAPSED))
+        
+        if [ "$REMAINING" -le 0 ]; then
+            echo "🛑 الستريمر طافي منذ 10 دقائق. إيقاف البث نهائياً."
+            exit 0
+        fi
+        
+        stream_standby "$REMAINING"
         echo "⚠️ شاشة الانتظار انقطعت. إعادة الفحص..."
         sleep 5
     fi
