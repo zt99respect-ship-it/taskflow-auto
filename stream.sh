@@ -5,8 +5,8 @@ set +m
 #  SXB Broadcast — Infinite Handoff (3s Gap)
 # ═══════════════════════════════════════════════════
 
-STREAMER="S5B"
-TITLE_AR="انتضار بث صخب "
+STREAMER="DRB7H"
+TITLE_AR="انتضار بث دربحه"
 SUBTITLE_AR="بث ريسبكت!"
 LOGO_URL="https://h.top4top.io/p_3966xt60d0.png"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
