@@ -1,4 +1,4 @@
-name: SXB 24-7 Seamless Handoff
+name: RT 24-7 Seamless Handoff
 
 on:
   workflow_dispatch:
