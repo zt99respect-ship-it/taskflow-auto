@@ -31,8 +31,8 @@ FONT_AR = os.path.expanduser("~/.fonts/Cairo-var.ttf")
 FONT_EN = os.path.expanduser("~/.fonts/Orbitron-var.ttf")
 TITLE = os.environ.get("TITLE_AR", "توقف البث")
 SUBTITLE = os.environ.get("SUBTITLE_AR", "جاري الانتظار...")
-STREAMER = os.environ.get("STREAMER", "SXB")
-LOGO_URL = os.environ.get("LOGO_URL", "")
+STREAMER = os.environ.get("STREAMER", "S5B")
+LOGO_URL = os.environ.get("LOGO_URL", "https://h.top4top.io/p_3966xt60d0.png")
 
 def load_font(path, size, weight=700):
     try:
