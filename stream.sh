@@ -145,21 +145,20 @@ stream_live() {
 }
 
 stream_standby() {
-    # التعديل الوحيد: استلام الوقت وطباعته على الشاشة
     local REMAINING=$1
-    local MIN=$((REMAINING / 60))
-    local SEC=$((REMAINING % 60))
-    local TIME_STR=$(printf "%02d:%02d" $MIN $SEC)
+    echo "⏳ إرسال شاشة الانتظار (الوقت المتبقي: $REMAINING ثانية)..."
     
-    echo "⏳ إرسال شاشة الانتظار ($TIME_STR)..."
-    
+    # استخدام -stream_loop -1 لضمان عدم انهيار ffmpeg
+    # استخدام eif لرسم العداد التنازلي ديناميكياً
     ffmpeg -hide_banner -loglevel warning -nostdin \
-        -re -loop 1 -framerate 60 -i "$WORKDIR/bg.png" \
-        -f lavfi -i "anullsrc=r=44100:cl=stereo" \
-        -vf "drawtext=fontfile=$HOME/.fonts/Orbitron-var.ttf:text='$TIME_STR':x=w-tw-100:y=100:fontsize=80:fontcolor=red" \
-        -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 60 -r 30 \
+        -re -stream_loop -1 -i "$WORKDIR/standby.ts" \
+        -vf "drawtext=fontfile=$HOME/.fonts/Orbitron-var.ttf:text='%{eif\:floor(${REMAINING}-t)/60\:d\:2}\:%{eif\:mod(${REMAINING}-t\,60)\:d\:2}':x=w-tw-100:y=100:fontsize=70:fontcolor=red:box=1:boxcolor=black@0.5" \
+        -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 60 -r 30 -threads 1 \
         -c:a aac -b:a 128k -ar 44100 -ac 2 \
-        -t 15 -f flv "$RESTREAM_URL"
+        -t "$REMAINING" -f flv "$RESTREAM_URL" >/tmp/standby.log 2>&1 &
+    
+    STANDBY_PID=$!
+    echo "⏳ Standby PID: $STANDBY_PID"
 }
 
 # ═══════════════════════════════════════════════════
@@ -167,21 +166,27 @@ stream_standby() {
 # ═══════════════════════════════════════════════════
 echo "🚀 بدء المراقبة..."
 
-# التعديل الوحيد: متغيرات العداد
 OFFLINE_START=0
 MAX_OFFLINE=600
+STANDBY_PID=""
 
 while true; do
     URL=$(timeout 10 streamlink --http-header "User-Agent=$UA" "https://kick.com/$STREAMER" best --stream-url 2>/dev/null | grep -m1 "^http")
 
     if [ -n "$URL" ]; then
-        # التعديل الوحيد: تصفير العداد إذا كان يبث
+        # إذا كان يبث، نطفي شاشة الانتظار ونصفّر العداد
+        if [ -n "$STANDBY_PID" ] && kill -0 "$STANDBY_PID" 2>/dev/null; then
+            kill "$STANDBY_PID" 2>/dev/null
+            wait "$STANDBY_PID" 2>/dev/null
+            STANDBY_PID=""
+        fi
+        
         OFFLINE_START=0
         stream_live
         echo "⚠️ انقطع البث. إعادة الفحص بعد 5 ثواني..."
         sleep 5
     else
-        # التعديل الوحيد: حساب الوقت وإيقاف السكربت إذا وصل 10 دقائق
+        # إذا كان طافي، نحسب الوقت
         if [ "$OFFLINE_START" -eq 0 ]; then
             OFFLINE_START=$(date +%s)
         fi
@@ -192,11 +197,15 @@ while true; do
         
         if [ "$REMAINING" -le 0 ]; then
             echo "🛑 الستريمر طافي منذ 10 دقائق. إيقاف البث نهائياً."
+            if [ -n "$STANDBY_PID" ]; then kill "$STANDBY_PID" 2>/dev/null; fi
             exit 0
         fi
         
-        stream_standby "$REMAINING"
-        echo "⚠️ شاشة الانتظار انقطعت. إعادة الفحص..."
+        # إذا لم تكن شاشة الانتظار شغالة، نشغلها
+        if [ -z "$STANDBY_PID" ] || ! kill -0 "$STANDBY_PID" 2>/dev/null; then
+            stream_standby "$REMAINING"
+        fi
+        
         sleep 5
     fi
 done
