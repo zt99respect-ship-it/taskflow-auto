@@ -5,8 +5,8 @@ set +m
 #  SXB Broadcast — Infinite Handoff (3s Gap)
 # ═══════════════════════════════════════════════════
 
-STREAMER="S5B"
-TITLE_AR="انتضار بث صخب"
+STREAMER="ID7O"
+TITLE_AR="انتضار بث سايكو دام "
 SUBTITLE_AR="بث ريسبكت!"
 LOGO_URL="https://h.top4top.io/p_3966xt60d0.png"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -31,7 +31,7 @@ FONT_AR = os.path.expanduser("~/.fonts/Cairo-var.ttf")
 FONT_EN = os.path.expanduser("~/.fonts/Orbitron-var.ttf")
 TITLE = os.environ.get("TITLE_AR", "توقف البث")
 SUBTITLE = os.environ.get("SUBTITLE_AR", "جاري الانتظار...")
-STREAMER = os.environ.get("STREAMER", "drb7h")
+STREAMER = os.environ.get("STREAMER", "ID7O")
 LOGO_URL = os.environ.get("LOGO_URL", "https://h.top4top.io/p_3966xt60d0.png")
 
 def load_font(path, size, weight=700):
