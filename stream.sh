@@ -5,7 +5,7 @@ set +m
 #  SXB Broadcast — Infinite Handoff (3s Gap)
 # ═══════════════════════════════════════════════════
 
-STREAMER="S5B"
+STREAMER="drb7h"
 TITLE_AR="بث صخب سوو فولو"
 SUBTITLE_AR="بث ريسبكت!"
 LOGO_URL="https://h.top4top.io/p_3966xt60d0.png"
