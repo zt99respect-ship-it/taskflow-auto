@@ -6,7 +6,7 @@ set +m
 # ═══════════════════════════════════════════════════
 
 STREAMER="drb7h"
-TITLE_AR=انتهى البث او علق "
+TITLE_AR=" انتهى البث او علق "
 SUBTITLE_AR="بث ريسبكت!"
 LOGO_URL="https://h.top4top.io/p_3966xt60d0.png"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
