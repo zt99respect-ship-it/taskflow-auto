@@ -11,7 +11,7 @@ SUBTITLE_AR="بث ريسبكت!"
 LOGO_URL="https://h.top4top.io/p_3966xt60d0.png"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-RESTREAM_KEY="${RESTREAM_KEY:-re_12552561_event81737fba9ada4713ab13ad7e04a36880}"
+RESTREAM_KEY="${RESTREAM_KEY:-re_12394050_event67e185b829014094a368d4e64b5c4241}"
 [ -z "$RESTREAM_KEY" ] && { echo "❌ مفتاح Restream فارغ"; exit 1; }
 
 RESTREAM_URL="rtmp://live.restream.io/live/$RESTREAM_KEY"
