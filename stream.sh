@@ -2,7 +2,7 @@
 set +m
 
 # ═══════════════════════════════════════════════════
-#  SXB Broadcast — Smart State Machine (Anti-Glitch)
+#  SXB Broadcast — Infinite Handoff (3s Gap)
 # ═══════════════════════════════════════════════════
 
 STREAMER="drb7h"
@@ -31,7 +31,7 @@ FONT_AR = os.path.expanduser("~/.fonts/Cairo-var.ttf")
 FONT_EN = os.path.expanduser("~/.fonts/Orbitron-var.ttf")
 TITLE = os.environ.get("TITLE_AR", "توقف البث")
 SUBTITLE = os.environ.get("SUBTITLE_AR", "جاري الانتظار...")
-STREAMER = os.environ.get("STREAMER", "drb7h")
+STREAMER = os.environ.get("STREAMER", "ID7O")
 LOGO_URL = os.environ.get("LOGO_URL", "https://h.top4top.io/p_3966xt60d0.png")
 
 def load_font(path, size, weight=700):
@@ -129,23 +129,6 @@ fi
 # ═══════════════════════════════════════════════════
 #  دوال البث
 # ═══════════════════════════════════════════════════
-LIVE_PID=""
-STANDBY_PID=""
-
-kill_streams() {
-    if [ -n "$LIVE_PID" ] && kill -0 "$LIVE_PID" 2>/dev/null; then
-        kill "$LIVE_PID" 2>/dev/null
-        wait "$LIVE_PID" 2>/dev/null
-    fi
-    LIVE_PID=""
-    
-    if [ -n "$STANDBY_PID" ] && kill -0 "$STANDBY_PID" 2>/dev/null; then
-        kill "$STANDBY_PID" 2>/dev/null
-        wait "$STANDBY_PID" 2>/dev/null
-    fi
-    STANDBY_PID=""
-}
-
 stream_live() {
     echo "🔴 بث مباشر: $STREAMER (1080p60 Zero-CPU)"
     streamlink --http-header "User-Agent=$UA" "https://kick.com/$STREAMER" best --stdout 2>/dev/null | \
@@ -158,90 +141,71 @@ stream_live() {
         -af "volume=1.1,alimiter=limit=0.95" \
         -c:a aac -b:a 160k -ar 44100 -ac 2 \
         -max_muxing_queue_size 4096 -flvflags no_duration_filesize \
-        -f flv "$RESTREAM_URL" &
-    LIVE_PID=$!
+        -f flv "$RESTREAM_URL"
 }
 
-stream_standby_timer() {
+stream_standby() {
     local REMAINING=$1
-    echo "⏳ إرسال شاشة انتظار (مؤقت: $REMAINING ثانية)..."
+    echo "⏳ إرسال شاشة الانتظار (الوقت المتبقي: $REMAINING ثانية)..."
+    
+    # استخدام -stream_loop -1 لضمان عدم انهيار ffmpeg
+    # استخدام eif لرسم العداد التنازلي ديناميكياً
     ffmpeg -hide_banner -loglevel warning -nostdin \
         -re -stream_loop -1 -i "$WORKDIR/standby.ts" \
-        -vf "drawtext=fontfile=$HOME/.fonts/Orbitron-var.ttf:text='%{eif\:floor((${REMAINING}-t)/60)\:d\:2}\:%{eif\:mod(${REMAINING}-t\,60)\:d\:2}':x=w-tw-100:y=100:fontsize=70:fontcolor=red:box=1:boxcolor=black@0.5" \
+        -vf "drawtext=fontfile=$HOME/.fonts/Orbitron-var.ttf:text='%{eif\:floor(${REMAINING}-t)/60\:d\:2}\:%{eif\:mod(${REMAINING}-t\,60)\:d\:2}':x=w-tw-100:y=100:fontsize=70:fontcolor=red:box=1:boxcolor=black@0.5" \
         -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 60 -r 30 -threads 1 \
         -c:a aac -b:a 128k -ar 44100 -ac 2 \
         -t "$REMAINING" -f flv "$RESTREAM_URL" >/tmp/standby.log 2>&1 &
+    
     STANDBY_PID=$!
+    echo "⏳ Standby PID: $STANDBY_PID"
 }
 
 # ═══════════════════════════════════════════════════
-#  الحلقة الرئيسية (الآلة الذكية)
+#  الحلقة الرئيسية
 # ═══════════════════════════════════════════════════
-echo "🚀 بدء المراقبة الدائمة..."
+echo "🚀 بدء المراقبة..."
 
-CURRENT_MODE="INIT_OFFLINE"
 OFFLINE_START=0
-MAX_OFFLINE=600 # 10 دقائق
-FAIL_COUNT=0 # عداد لتحمل انقطاع كيك المفاجئ
+MAX_OFFLINE=600
+STANDBY_PID=""
 
 while true; do
-    URL=$(timeout 15 streamlink --http-header "User-Agent=$UA" "https://kick.com/$STREAMER" best --stream-url 2>/dev/null | grep -m1 "^http")
+    URL=$(timeout 10 streamlink --http-header "User-Agent=$UA" "https://kick.com/$STREAMER" best --stream-url 2>/dev/null | grep -m1 "^http")
 
     if [ -n "$URL" ]; then
-        # ---------------- الستريمر أونلاين ----------------
+        # إذا كان يبث، نطفي شاشة الانتظار ونصفّر العداد
+        if [ -n "$STANDBY_PID" ] && kill -0 "$STANDBY_PID" 2>/dev/null; then
+            kill "$STANDBY_PID" 2>/dev/null
+            wait "$STANDBY_PID" 2>/dev/null
+            STANDBY_PID=""
+        fi
+        
         OFFLINE_START=0
-        FAIL_COUNT=0 # تصفير عداد الفشل لأن الستريمر موجود
-        
-        if [ "$CURRENT_MODE" != "LIVE" ]; then
-            echo "🟢 الستريمر متصل! تحويل للبث المباشر..."
-            kill_streams
-            stream_live
-            CURRENT_MODE="LIVE"
-        fi
+        stream_live
+        echo "⚠️ انقطع البث. إعادة الفحص بعد 5 ثواني..."
+        sleep 5
     else
-        # ---------------- الستريمر أوفلاين ----------------
-        # الزيادة في عداد الفشل
-        FAIL_COUNT=$((FAIL_COUNT + 1))
-        
-        # ما نعتبره طفى إلا إذا فشل 3 مرات متتالية (يعني تقريباً 90 ثانية)
-        if [ "$FAIL_COUNT" -ge 3 ]; then
-            NOW=$(date +%s)
-            
-            if [ "$CURRENT_MODE" = "LIVE" ]; then
-                # كان يبث وطفى فعلاً -> نبدأ العداد
-                echo "🔴 الستريمر طفى! بدء العداد التنازلي (10 دقائق)..."
-                OFFLINE_START=$NOW
-                kill_streams
-                stream_standby_timer "$MAX_OFFLINE"
-                CURRENT_MODE="TIMER"
-                
-            elif [ "$CURRENT_MODE" = "TIMER" ]; then
-                # نحن في فترة العداد
-                ELAPSED=$((NOW - OFFLINE_START))
-                REMAINING=$((MAX_OFFLINE - ELAPSED))
-                
-                if [ "$REMAINING" -le 0 ]; then
-                    # العداد خلص -> إيقاف الإرسال
-                    echo "🛑 انتهى وقت الانتظار (10 دقائق). قطع الإرسال لريستريم..."
-                    kill_streams
-                    CURRENT_MODE="DEAD_AIR"
-                elif [ -n "$STANDBY_PID" ] && ! kill -0 "$STANDBY_PID" 2>/dev/null; then
-                    # إذا ماتت شاشة الانتظار فجأة لأي سبب، نرجع نشغلها
-                    stream_standby_timer "$REMAINING"
-                fi
-                
-            elif [ "$CURRENT_MODE" = "INIT_OFFLINE" ] || [ "$CURRENT_MODE" = "DEAD_AIR" ]; then
-                # الستريمر طافي من البداية أو العداد خلص -> نسكت تماماً
-                if [ "$CURRENT_MODE" = "INIT_OFFLINE" ]; then
-                    echo "⏳ الستريمر أوفلاين. في انتظار بدء البث (لا يتم إرسال شيء لريستريم)..."
-                    CURRENT_MODE="DEAD_AIR"
-                fi
-            fi
-        else
-            echo "⚠️ فشل الفحص ($FAIL_COUNT/3). في انتظار التأكيد..."
+        # إذا كان طافي، نحسب الوقت
+        if [ "$OFFLINE_START" -eq 0 ]; then
+            OFFLINE_START=$(date +%s)
         fi
+        
+        NOW=$(date +%s)
+        ELAPSED=$((NOW - OFFLINE_START))
+        REMAINING=$((MAX_OFFLINE - ELAPSED))
+        
+        if [ "$REMAINING" -le 0 ]; then
+            echo "🛑 الستريمر طافي منذ 10 دقائق. إيقاف البث نهائياً."
+            if [ -n "$STANDBY_PID" ]; then kill "$STANDBY_PID" 2>/dev/null; fi
+            exit 0
+        fi
+        
+        # إذا لم تكن شاشة الانتظار شغالة، نشغلها
+        if [ -z "$STANDBY_PID" ] || ! kill -0 "$STANDBY_PID" 2>/dev/null; then
+            stream_standby "$REMAINING"
+        fi
+        
+        sleep 5
     fi
-
-    # فحص كل 30 ثانية
-    sleep 30
 done
