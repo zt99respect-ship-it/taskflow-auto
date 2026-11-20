@@ -2,11 +2,11 @@
 set +m
 
 # ═══════════════════════════════════════════════════
-#  SXB Broadcast — Smart State Machine (Infinite)
+#  SXB Broadcast — Smart State Machine (Anti-Glitch)
 # ═══════════════════════════════════════════════════
 
 STREAMER="drb7h"
-TITLE_AR=" انتهى البث او علق "
+TITLE_AR="بث دربحه سوو فولو"
 SUBTITLE_AR="بث ريسبكت!"
 LOGO_URL="https://h.top4top.io/p_3966xt60d0.png"
 UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -179,16 +179,18 @@ stream_standby_timer() {
 # ═══════════════════════════════════════════════════
 echo "🚀 بدء المراقبة الدائمة..."
 
-CURRENT_MODE="INIT_OFFLINE" # INIT_OFFLINE, LIVE, TIMER, DEAD_AIR
+CURRENT_MODE="INIT_OFFLINE"
 OFFLINE_START=0
 MAX_OFFLINE=600 # 10 دقائق
+FAIL_COUNT=0 # عداد لتحمل انقطاع كيك المفاجئ
 
 while true; do
-    URL=$(timeout 10 streamlink --http-header "User-Agent=$UA" "https://kick.com/$STREAMER" best --stream-url 2>/dev/null | grep -m1 "^http")
+    URL=$(timeout 15 streamlink --http-header "User-Agent=$UA" "https://kick.com/$STREAMER" best --stream-url 2>/dev/null | grep -m1 "^http")
 
     if [ -n "$URL" ]; then
         # ---------------- الستريمر أونلاين ----------------
         OFFLINE_START=0
+        FAIL_COUNT=0 # تصفير عداد الفشل لأن الستريمر موجود
         
         if [ "$CURRENT_MODE" != "LIVE" ]; then
             echo "🟢 الستريمر متصل! تحويل للبث المباشر..."
@@ -198,38 +200,45 @@ while true; do
         fi
     else
         # ---------------- الستريمر أوفلاين ----------------
-        NOW=$(date +%s)
+        # الزيادة في عداد الفشل
+        FAIL_COUNT=$((FAIL_COUNT + 1))
         
-        if [ "$CURRENT_MODE" = "LIVE" ]; then
-            # كان يبث وطفى -> نبدأ العداد
-            echo "🔴 الستريمر طفى! بدء العداد التنازلي (10 دقائق)..."
-            OFFLINE_START=$NOW
-            kill_streams
-            stream_standby_timer "$MAX_OFFLINE"
-            CURRENT_MODE="TIMER"
+        # ما نعتبره طفى إلا إذا فشل 3 مرات متتالية (يعني تقريباً 90 ثانية)
+        if [ "$FAIL_COUNT" -ge 3 ]; then
+            NOW=$(date +%s)
             
-        elif [ "$CURRENT_MODE" = "TIMER" ]; then
-            # نحن في فترة العداد
-            ELAPSED=$((NOW - OFFLINE_START))
-            REMAINING=$((MAX_OFFLINE - ELAPSED))
-            
-            if [ "$REMAINING" -le 0 ]; then
-                # العداد خلص -> إيقاف الإرسال
-                echo "🛑 انتهى وقت الانتظار (10 دقائق). قطع الإرسال لريستريم..."
+            if [ "$CURRENT_MODE" = "LIVE" ]; then
+                # كان يبث وطفى فعلاً -> نبدأ العداد
+                echo "🔴 الستريمر طفى! بدء العداد التنازلي (10 دقائق)..."
+                OFFLINE_START=$NOW
                 kill_streams
-                CURRENT_MODE="DEAD_AIR"
-            elif [ -n "$STANDBY_PID" ] && ! kill -0 "$STANDBY_PID" 2>/dev/null; then
-                # إذا ماتت شاشة الانتظار فجأة لأي سبب، نرجع نشغلها
-                stream_standby_timer "$REMAINING"
+                stream_standby_timer "$MAX_OFFLINE"
+                CURRENT_MODE="TIMER"
+                
+            elif [ "$CURRENT_MODE" = "TIMER" ]; then
+                # نحن في فترة العداد
+                ELAPSED=$((NOW - OFFLINE_START))
+                REMAINING=$((MAX_OFFLINE - ELAPSED))
+                
+                if [ "$REMAINING" -le 0 ]; then
+                    # العداد خلص -> إيقاف الإرسال
+                    echo "🛑 انتهى وقت الانتظار (10 دقائق). قطع الإرسال لريستريم..."
+                    kill_streams
+                    CURRENT_MODE="DEAD_AIR"
+                elif [ -n "$STANDBY_PID" ] && ! kill -0 "$STANDBY_PID" 2>/dev/null; then
+                    # إذا ماتت شاشة الانتظار فجأة لأي سبب، نرجع نشغلها
+                    stream_standby_timer "$REMAINING"
+                fi
+                
+            elif [ "$CURRENT_MODE" = "INIT_OFFLINE" ] || [ "$CURRENT_MODE" = "DEAD_AIR" ]; then
+                # الستريمر طافي من البداية أو العداد خلص -> نسكت تماماً
+                if [ "$CURRENT_MODE" = "INIT_OFFLINE" ]; then
+                    echo "⏳ الستريمر أوفلاين. في انتظار بدء البث (لا يتم إرسال شيء لريستريم)..."
+                    CURRENT_MODE="DEAD_AIR"
+                fi
             fi
-            
-        elif [ "$CURRENT_MODE" = "INIT_OFFLINE" ] || [ "$CURRENT_MODE" = "DEAD_AIR" ]; then
-            # الستريمر طافي من البداية أو العداد خلص -> نسكت تماماً
-            # لا نرسل شي لريستريم، بس ننتظر
-            if [ "$CURRENT_MODE" = "INIT_OFFLINE" ]; then
-                echo "⏳ الستريمر أوفلاين. في انتظار بدء البث (لا يتم إرسال شيء لريستريم)..."
-                CURRENT_MODE="DEAD_AIR"
-            fi
+        else
+            echo "⚠️ فشل الفحص ($FAIL_COUNT/3). في انتظار التأكيد..."
         fi
     fi
 
